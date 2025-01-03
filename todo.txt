@@ -1,0 +1,2 @@
+distrubte work based on rows
+save df for next time use
