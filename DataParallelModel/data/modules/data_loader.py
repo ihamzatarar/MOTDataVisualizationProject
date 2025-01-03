@@ -2,8 +2,8 @@ import pandas as pd
 import csv
 import os
 from mpi4py import MPI
-from data_frames import DataFrameCreator
-from data_cleaner import DataCleaner  # Import the DataCleaner class
+
+from data.modules.data_frames import DataFrameCreator
 
 
 class DataLoader:
@@ -53,7 +53,9 @@ class DataLoader:
         Distributes the work of loading and cleaning data among MPI processes.
         """
         if self.rank == 0:  # Master node
-            csv_files = [f"./test_result_2022/{f}" for f in os.listdir('./test_result_2022') if f.endswith('.csv')]
+            print( os.getcwd())
+            # "DataParallelModel/data/test_result_2022"
+            csv_files = [f"DataParallelModel/data/test_result_2022/{f}" for f in os.listdir('DataParallelModel/data/test_result_2022') if f.endswith('.csv')]
             chunks = [[] for _ in range(self.size)]
             for i, file in enumerate(csv_files):
                 chunks[i % self.size].append(file)
@@ -86,11 +88,12 @@ class DataLoader:
 
             df_creator = DataFrameCreator()
             vehicle_df, test_df = df_creator.create_data_frames(final_df)
-            if not os.path.exists("local_db"):
+
+            if not os.path.exists("DataParallelModel/data/local_db"):
                 # Create the directory
-                os.makedirs("local_db")
-            vehicle_df.to_pickle("local_db/vehicle_df.pkl")
-            test_df.to_pickle("local_db/test_df.pkl")
+                os.makedirs("DataParallelModel/data/local_db")
+            vehicle_df.to_pickle("DataParallelModel/data/local_db/vehicle_df.pkl")
+            test_df.to_pickle("DataParallelModel/data/local_db/test_df.pkl")
 
             return vehicle_df, test_df  # Return the DataFrames
         else:
