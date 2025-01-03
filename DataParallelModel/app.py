@@ -19,10 +19,10 @@ def main():
     data_loader = DataLoader(data_cleaner, rows_per_file)
     # Distribute work and get the DataFrames on the master node
 
-    if os.path.isfile("DataParallelModel/data/local_db/vehicle_df.pkl"):
+    if os.path.isfile("database/local_db/vehicle_df.pkl"):
         if rank == 0:
-            vehicle_df = pd.read_pickle("DataParallelModel/data/local_db/vehicle_df.pkl")
-            test_df = pd.read_pickle("DataParallelModel/data/local_db/test_df.pkl")
+            vehicle_df = pd.read_pickle("database/local_db/vehicle_df.pkl")
+            test_df = pd.read_pickle("database/local_db/test_df.pkl")
             print("DataFrames loaded from Pickle files.")
         else:
             vehicle_df = None

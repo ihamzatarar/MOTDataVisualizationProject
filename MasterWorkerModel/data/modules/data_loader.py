@@ -48,6 +48,32 @@ class DataLoader:
 
         return pd.DataFrame(data)
 
+    def load_and_clean_data(self):
+        # Only the master process executes this
+        if self.rank != 0:
+            return None, None
+
+        csv_files = [
+            f"database/test_result_2022/{f}"  # Correct the path if needed
+            for f in os.listdir("database/test_result_2022")
+            if f.endswith(".csv")
+        ]
+        final_df = pd.DataFrame()
+        for file in csv_files:
+            print(f"Master node processing {file}")
+            df_chunk = self.process_file(file, 0)  # process_file remains unchanged
+            final_df = pd.concat([final_df, df_chunk], ignore_index=True)
+            print(f"Master node finished processing {file}")
+
+        print("Data loading and cleaning complete.")
+        df_creator = DataFrameCreator()  # You might need to adjust this
+        vehicle_df, test_df = df_creator.create_data_frames(final_df)
+        if not os.path.exists("database/local_db"):
+            os.makedirs("database/local_db")
+        vehicle_df.to_pickle("database/local_db/vehicle_df.pkl")
+        test_df.to_pickle("database/local_db/test_df.pkl")
+        return vehicle_df, test_df
+
     def distribute_work(self):
         """
         Distributes the work of loading and cleaning data among MPI processes.
@@ -55,7 +81,7 @@ class DataLoader:
         if self.rank == 0:  # Master node
             print( os.getcwd())
             # "DataParallelModel/data/test_result_2022"
-            csv_files = [f"database/test_result_2022/{f}" for f in os.listdir('database/test_result_2022') if f.endswith('.csv')]
+            csv_files = [f"DataParallelModel/data/test_result_2022/{f}" for f in os.listdir('DataParallelModel/data/test_result_2022') if f.endswith('.csv')]
             chunks = [[] for _ in range(self.size)]
             for i, file in enumerate(csv_files):
                 chunks[i % self.size].append(file)
@@ -89,11 +115,11 @@ class DataLoader:
             df_creator = DataFrameCreator()
             vehicle_df, test_df = df_creator.create_data_frames(final_df)
 
-            if not os.path.exists("databaselocal_db"):
+            if not os.path.exists("DataParallelModel/data/local_db"):
                 # Create the directory
-                os.makedirs("database/local_db")
-            vehicle_df.to_pickle("database/local_db/vehicle_df.pkl")
-            test_df.to_pickle("database/local_db/test_df.pkl")
+                os.makedirs("DataParallelModel/data/local_db")
+            vehicle_df.to_pickle("DataParallelModel/data/local_db/vehicle_df.pkl")
+            test_df.to_pickle("DataParallelModel/data/local_db/test_df.pkl")
 
             return vehicle_df, test_df  # Return the DataFrames
         else:
