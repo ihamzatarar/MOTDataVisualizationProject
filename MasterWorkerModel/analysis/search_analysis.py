@@ -1,33 +1,15 @@
+import pickle
+
 import pandas as pd
 from mpi4py import MPI
+
 
 class SearchAnalyzer:
     def __init__(self, comm, rank, size):
         self.comm = comm
         self.rank = rank
         self.size = size
-
-    def handle_task(self, task):
-        """
-        Handles a task received from the master process.
-
-        Args:
-            task (dict): A dictionary containing task information.
-
-        Returns:
-            pd.DataFrame: The result of the task (e.g., search results).
-        """
-        task_type = task['type']
-        data = task['data']
-        criteria = task['criteria']
-
-        if task_type == 'search':
-            vehicle_df, test_df = data
-            result = self.combined_search(vehicle_df, test_df, **criteria)
-            return result
-        else:
-            print(f"Rank {self.rank}: Unknown task type: {task_type}")
-            return None
+        self.num_blocks = self.size * 4  # You can adjust the number of blocks
 
     def search_by_make(self, df, make):
         """Searches for vehicles of a specific make."""
@@ -48,11 +30,11 @@ class SearchAnalyzer:
     def combined_search(self, local_vehicle_df, local_test_df, make=None, model=None, year=None, min_mileage=None,
                         max_mileage=None):
         """
-        Performs a combined search based on multiple criteria. This is now executed by worker processes.
+        Performs a combined search based on multiple criteria.
 
         Args:
-            local_vehicle_df (pd.DataFrame): The local vehicle DataFrame (received as part of a task).
-            local_test_df (pd.DataFrame): The local test DataFrame (received as part of a task).
+            local_vehicle_df (pd.DataFrame): The local vehicle DataFrame.
+            local_test_df (pd.DataFrame): The local test DataFrame.
             make (str, optional): The make to search for.
             model (str, optional): The model to search for.
             year (int, optional): The year of first use to search for.
@@ -103,3 +85,160 @@ class SearchAnalyzer:
 
         print(f"Rank {self.rank}: Exiting combined_search")
         return merged_df
+
+    def master_process(self, vehicle_df, test_df, search_criteria):
+        """Handles the master process logic with Block-Cyclic and Dynamic Mapping."""
+        print("Master: Entering master_process for combined search")
+
+        # 1. Block-Cyclic Decomposition
+        vehicle_chunks = [pd.DataFrame() for _ in range(self.size)]
+        test_chunks = [pd.DataFrame() for _ in range(self.size)]
+
+        vehicle_block_size = len(vehicle_df) // self.num_blocks
+        test_block_size = len(test_df) // self.num_blocks
+
+        for i in range(self.num_blocks):
+            vehicle_start = i * vehicle_block_size
+            vehicle_end = (i + 1) * vehicle_block_size
+            test_start = i * test_block_size
+            test_end = (i + 1) * test_block_size
+
+            process_id = i % self.size
+
+            vehicle_chunks[process_id] = pd.concat([vehicle_chunks[process_id], vehicle_df[vehicle_start:vehicle_end]])
+            test_chunks[process_id] = pd.concat([test_chunks[process_id], test_df[test_start:test_end]])
+
+        print("Master: Block-Cyclic Decomposition complete")
+
+        # 2. Create Sub-queries
+        print("Master: Creating sub-queries")
+        sub_queries = []
+        if search_criteria.get('make'):
+            sub_queries.append({'type': 'make', 'value': search_criteria['make']})
+        if search_criteria.get('model'):
+            sub_queries.append({'type': 'model', 'value': search_criteria['model']})
+        if search_criteria.get('year'):
+            sub_queries.append({'type': 'year', 'value': search_criteria['year']})
+        if search_criteria.get('min_mileage') is not None and search_criteria.get('max_mileage') is not None:
+            sub_queries.append({'type': 'mileage', 'min_value': search_criteria['min_mileage'],
+                                'max_value': search_criteria['max_mileage']})
+        print(f"Master: Created {len(sub_queries)} sub-queries")
+
+        # 3. Dynamic Task Assignment
+        print("Master: Assigning tasks to workers")
+        tasks = []
+        for i in range(1, self.size):
+            for j in range(0, len(sub_queries)):
+                tasks.append({
+                    'vehicle_chunk': vehicle_chunks[i - 1],
+                    'test_chunk': test_chunks[i - 1],
+                    'sub_query': [sub_queries[j]]
+                })
+
+        print(f"Master: Created {len(tasks)} tasks")
+
+        available_workers = list(range(1, self.size))
+        task_counter = 0
+        results = []
+
+        while True:
+            # Send tasks to available workers
+            while available_workers and task_counter < len(tasks):
+                worker_id = available_workers.pop(0)
+                task = tasks[task_counter]
+
+                # Serialize DataFrames using pickle to bytes
+                vehicle_bytes = pickle.dumps(task['vehicle_chunk'])
+                test_bytes = pickle.dumps(task['test_chunk'])
+                sub_query_bytes = pickle.dumps(task['sub_query'])
+
+                # Send data size first, then data
+                self.comm.send(len(vehicle_bytes), dest=worker_id, tag=0)  # Vehicle size
+                self.comm.send(vehicle_bytes, dest=worker_id, tag=1)  # Vehicle data
+                self.comm.send(len(test_bytes), dest=worker_id, tag=2)  # Test size
+                self.comm.send(test_bytes, dest=worker_id, tag=3)  # Test data
+                self.comm.send(len(sub_query_bytes), dest=worker_id, tag=4)  # Subquery size
+                self.comm.send(sub_query_bytes, dest=worker_id, tag=5)  # Subquery data
+
+                task_counter += 1
+
+            if task_counter >= len(tasks) and len(results) == len(tasks):
+                print("Master: All tasks sent and results received. Breaking loop.")
+                break
+
+            # Receive results
+            if len(results) < task_counter:
+                print("Master: Waiting for results...")
+                result = self.comm.recv(source=MPI.ANY_SOURCE, tag=6)  # Tag 6 for results
+                results.append(result)
+                print(f"Master: Received result from worker {result[1]}")
+
+                worker_id = result[1]
+                available_workers.append(worker_id)
+
+        # 4. Aggregate Results
+        print("Master: Aggregating results")
+        received_results = []
+        for r in results:
+            received_results.append(r[0])
+
+        combined_results = pd.concat(received_results)
+        print("Master: Exiting master_process")
+        return combined_results
+
+    def worker_process(self, vehicle_df, test_df):
+        while True:
+            try:
+                # Signal availability to the master
+                print(f"Worker {self.rank}: Signaling availability to master")
+                self.comm.send(None, dest=0, tag=0)
+
+                # Receive vehicle data size and data
+                print(f"Worker {self.rank}: Waiting for vehicle data size")
+                vehicle_size = self.comm.recv(source=0, tag=0)
+                print(f"Worker {self.rank}: Received vehicle data size: {vehicle_size}")
+                vehicle_data = self.comm.recv(source=0, tag=1)
+                local_vehicle_df = pickle.loads(vehicle_data)
+
+                # Receive test data size and data
+                print(f"Worker {self.rank}: Waiting for test data size")
+                test_size = self.comm.recv(source=0, tag=2)
+                print(f"Worker {self.rank}: Received test data size: {test_size}")
+                test_data = self.comm.recv(source=0, tag=3)
+                local_test_df = pickle.loads(test_data)
+
+                # Receive sub-query size and data
+                print(f"Worker {self.rank}: Waiting for sub-query size")
+                sub_query_size = self.comm.recv(source=0, tag=4)
+                print(f"Worker {self.rank}: Received sub-query size: {sub_query_size}")
+                sub_query_data = self.comm.recv(source=0, tag=5)
+                sub_queries = pickle.loads(sub_query_data)
+
+                # Perform Search
+                print(f"Worker {self.rank}: Performing search with sub-queries: {sub_queries}")
+                local_results = self.combined_search(local_vehicle_df, local_test_df,
+                                                     make=sub_queries[0].get('value') if sub_queries[0][
+                                                                                             'type'] == 'make' else None,
+                                                     model=sub_queries[0].get('value') if sub_queries[0][
+                                                                                              'type'] == 'model' else None,
+                                                     year=sub_queries[0].get('value') if sub_queries[0][
+                                                                                             'type'] == 'year' else None,
+                                                     min_mileage=sub_queries[0].get('min_value') if
+                                                     sub_queries[0]['type'] == 'mileage' else None,
+                                                     max_mileage=sub_queries[0].get('max_value') if
+                                                     sub_queries[0]['type'] == 'mileage' else None)
+
+                # Send results back to master along with worker ID
+                print(f"Worker {self.rank}: Sending results back to master")
+                self.comm.send((local_results, self.rank), dest=0, tag=6)  # Tag 6 for results
+
+                # Check for termination signal
+                if self.comm.iprobe(source=0, tag=7):  # Tag 7 for termination
+                    print(f"Worker {self.rank}: Received termination signal.")
+                    self.comm.recv(source=0, tag=7)  # Actually receive the signal
+                    print(f"Worker {self.rank}: Exiting.")
+                    break
+
+            except Exception as e:
+                print(f"Worker {self.rank}: Error occurred: {e}")
+                break

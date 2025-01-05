@@ -87,7 +87,7 @@ class MainWindow(QWidget):
             self.analysis_mode_button.setText("Analysis Mode OFF")
 
     def search(self):
-        # Only the master node (rank 0) gathers input
+        # Only the master node (rank 0) gathers input and starts the search process
         if self.rank == 0:
             make = self.search_group.make_edit.text()
             model = self.search_group.model_edit.text()
@@ -124,19 +124,10 @@ class MainWindow(QWidget):
                 'max_mileage': max_mileage
             }
 
-        else:
-            search_criteria = None
+            # Master process performs search using dynamic mapping
+            results = self.search_analyzer.master_process(self.vehicle_df, self.test_df, search_criteria)
 
-        # Broadcast search criteria to all processes
-        search_criteria = self.comm.bcast(search_criteria, root=0)
-
-        # All nodes perform the search
-        results = self.search_analyzer.distribute_search(
-            self.vehicle_df, self.test_df, **search_criteria
-        )
-
-        # Display results and perform analysis only on the master node
-        if self.rank == 0:
+            # Display results and perform analysis
             if results is not None and not results.empty:
                 model = PandasModel(results)
                 self.results_group.table.setModel(model)

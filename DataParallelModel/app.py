@@ -14,13 +14,14 @@ def main():
 
     # Set load_all_rows to False to load 50,000 rows, True to load 1,000,000 rows
     load_all_rows = False
-    rows_per_file = 10000 if not load_all_rows else 1000000
+    rows_per_file = 1000000 if not load_all_rows else 1000000
 
     data_loader = DataLoader(data_cleaner, rows_per_file)
     # Distribute work and get the DataFrames on the master node
 
     if os.path.isfile("database/local_db/vehicle_df.pkl"):
         if rank == 0:
+            print("Loading data from Pickle files...")
             vehicle_df = pd.read_pickle("database/local_db/vehicle_df.pkl")
             test_df = pd.read_pickle("database/local_db/test_df.pkl")
             print("DataFrames loaded from Pickle files.")

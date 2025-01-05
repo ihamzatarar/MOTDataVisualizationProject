@@ -4,28 +4,26 @@ from mpi4py import MPI
 from gui.main_window import MainWindow
 from analysis.search_analysis import SearchAnalyzer
 
-
 def gui_main(comm, rank, size, vehicle_df, test_df):
+    print(f"Process {rank}: Entering gui_main")  # Print for all processes
+
     app = QApplication(sys.argv)
 
-    # Create and show the main window only for the master process
     if rank == 0:
+        # Master process
+        print("Master process started")
         main_window = MainWindow(comm, rank, size, vehicle_df, test_df)
         main_window.show()
+
+        app.exec_()  # Start the PyQt event loop only for the master
+
+        # Clean shutdown after app closes (for both master and workers)
+        print("Master sending termination signal")
+        for i in range(1, size):
+            comm.isend(None, dest=i, tag=5)  # Send termination signal
+
     else:
-        # Worker processes need a SearchAnalyzer instance but not a GUI
+        # Worker processes
+        print(f"Worker {rank} started")  # Print when a worker starts
         search_analyzer = SearchAnalyzer(comm, rank, size)
-        # Keep worker processes alive to participate in the search
-        while True:
-            # Receive search criteria
-            search_criteria = comm.bcast(None, root=0)
-
-            if search_criteria is not None:
-                # Perform search
-                search_analyzer.distribute_search(vehicle_df, test_df, **search_criteria)
-            else:
-                # Exit condition (optional, for graceful termination)
-                break
-
-    if rank == 0:
-        sys.exit(app.exec_())
+        search_analyzer.worker_process(vehicle_df, test_df)
