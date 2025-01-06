@@ -1,7 +1,10 @@
+import sys
+
 from PyQt5.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QGroupBox, QMessageBox, QLabel, QLineEdit, QTableView, QAbstractItemView,
     QPushButton, QRadioButton, QScrollArea
 )
+import mpi4py as MPI
 from PyQt5.QtCore import Qt
 
 from analysis.core import calculate_pass_rate_by_age, calculate_pass_rate_by_mileage
@@ -166,6 +169,12 @@ class MainWindow(QWidget):
 
     def force_close(self):
         """Forcefully close the application by terminating all processes."""
-        if self.rank == 0:
-            self.comm.abort()  # Terminates the MPI program from the master node
+        # if self.rank == 0:
+        # raise ModuleNotFoundError("Force close")
+        # self.comm.Abort(0)
+
+
+        # Terminates the MPI program from the master node
+        #
+        #     return 0# Terminates the MPI program from the master node
         self.close()

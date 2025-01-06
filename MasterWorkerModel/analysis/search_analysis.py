@@ -110,30 +110,29 @@ class SearchAnalyzer:
 
         print("Master: Block-Cyclic Decomposition complete")
 
-        # 2. Create Sub-queries
-        print("Master: Creating sub-queries")
-        sub_queries = []
+        # 2. Create a single list of search criteria (not sub-queries)
+        print("Master: Creating search criteria list")
+        search_criteria_list = []
         if search_criteria.get('make'):
-            sub_queries.append({'type': 'make', 'value': search_criteria['make']})
+            search_criteria_list.append({'type': 'make', 'value': search_criteria['make']})
         if search_criteria.get('model'):
-            sub_queries.append({'type': 'model', 'value': search_criteria['model']})
+            search_criteria_list.append({'type': 'model', 'value': search_criteria['model']})
         if search_criteria.get('year'):
-            sub_queries.append({'type': 'year', 'value': search_criteria['year']})
+            search_criteria_list.append({'type': 'year', 'value': search_criteria['year']})
         if search_criteria.get('min_mileage') is not None and search_criteria.get('max_mileage') is not None:
-            sub_queries.append({'type': 'mileage', 'min_value': search_criteria['min_mileage'],
-                                'max_value': search_criteria['max_mileage']})
-        print(f"Master: Created {len(sub_queries)} sub-queries")
+            search_criteria_list.append({'type': 'mileage', 'min_value': search_criteria['min_mileage'],
+                                         'max_value': search_criteria['max_mileage']})
+        print(f"Master: Created search criteria list with {len(search_criteria_list)} criteria")
 
         # 3. Dynamic Task Assignment
         print("Master: Assigning tasks to workers")
         tasks = []
         for i in range(1, self.size):
-            for j in range(0, len(sub_queries)):
-                tasks.append({
-                    'vehicle_chunk': vehicle_chunks[i - 1],
-                    'test_chunk': test_chunks[i - 1],
-                    'sub_query': [sub_queries[j]]
-                })
+            tasks.append({
+                'vehicle_chunk': vehicle_chunks[i - 1],
+                'test_chunk': test_chunks[i - 1],
+                'search_criteria_list': search_criteria_list  # Send the entire list
+            })
 
         print(f"Master: Created {len(tasks)} tasks")
 
@@ -150,15 +149,15 @@ class SearchAnalyzer:
                 # Serialize DataFrames using pickle to bytes
                 vehicle_bytes = pickle.dumps(task['vehicle_chunk'])
                 test_bytes = pickle.dumps(task['test_chunk'])
-                sub_query_bytes = pickle.dumps(task['sub_query'])
+                search_criteria_bytes = pickle.dumps(task['search_criteria_list'])  # Serialize the list
 
                 # Send data size first, then data
                 self.comm.send(len(vehicle_bytes), dest=worker_id, tag=0)  # Vehicle size
                 self.comm.send(vehicle_bytes, dest=worker_id, tag=1)  # Vehicle data
                 self.comm.send(len(test_bytes), dest=worker_id, tag=2)  # Test size
                 self.comm.send(test_bytes, dest=worker_id, tag=3)  # Test data
-                self.comm.send(len(sub_query_bytes), dest=worker_id, tag=4)  # Subquery size
-                self.comm.send(sub_query_bytes, dest=worker_id, tag=5)  # Subquery data
+                self.comm.send(len(search_criteria_bytes), dest=worker_id, tag=4)  # Search criteria size
+                self.comm.send(search_criteria_bytes, dest=worker_id, tag=5)  # Search criteria
 
                 task_counter += 1
 
@@ -169,7 +168,7 @@ class SearchAnalyzer:
             # Receive results
             if len(results) < task_counter:
                 print("Master: Waiting for results...")
-                result = self.comm.recv(source=MPI.ANY_SOURCE, tag=6)  # Tag 6 for results
+                result = self.comm.recv(source=MPI.ANY_SOURCE, tag=6)
                 results.append(result)
                 print(f"Master: Received result from worker {result[1]}")
 
@@ -193,7 +192,9 @@ class SearchAnalyzer:
                 print(f"Worker {self.rank}: Signaling availability to master")
                 self.comm.send(None, dest=0, tag=0)
 
-                # Receive vehicle data size and data
+
+
+                    # Receive vehicle data size and data
                 print(f"Worker {self.rank}: Waiting for vehicle data size")
                 vehicle_size = self.comm.recv(source=0, tag=0)
                 print(f"Worker {self.rank}: Received vehicle data size: {vehicle_size}")
@@ -207,26 +208,28 @@ class SearchAnalyzer:
                 test_data = self.comm.recv(source=0, tag=3)
                 local_test_df = pickle.loads(test_data)
 
-                # Receive sub-query size and data
-                print(f"Worker {self.rank}: Waiting for sub-query size")
-                sub_query_size = self.comm.recv(source=0, tag=4)
-                print(f"Worker {self.rank}: Received sub-query size: {sub_query_size}")
-                sub_query_data = self.comm.recv(source=0, tag=5)
-                sub_queries = pickle.loads(sub_query_data)
+                # Receive search criteria size and data
+                print(f"Worker {self.rank}: Waiting for search criteria size")
+                search_criteria_size = self.comm.recv(source=0, tag=4)
+                print(f"Worker {self.rank}: Received search criteria size: {search_criteria_size}")
+                search_criteria_data = self.comm.recv(source=0, tag=5)
+                search_criteria_list = pickle.loads(search_criteria_data)  # Deserialize the list
 
-                # Perform Search
-                print(f"Worker {self.rank}: Performing search with sub-queries: {sub_queries}")
-                local_results = self.combined_search(local_vehicle_df, local_test_df,
-                                                     make=sub_queries[0].get('value') if sub_queries[0][
-                                                                                             'type'] == 'make' else None,
-                                                     model=sub_queries[0].get('value') if sub_queries[0][
-                                                                                              'type'] == 'model' else None,
-                                                     year=sub_queries[0].get('value') if sub_queries[0][
-                                                                                             'type'] == 'year' else None,
-                                                     min_mileage=sub_queries[0].get('min_value') if
-                                                     sub_queries[0]['type'] == 'mileage' else None,
-                                                     max_mileage=sub_queries[0].get('max_value') if
-                                                     sub_queries[0]['type'] == 'mileage' else None)
+                # Perform Search with ALL criteria
+                print(f"Worker {self.rank}: Performing search with criteria: {search_criteria_list}")
+                search_kwargs = {}
+                for criteria in search_criteria_list:
+                    if criteria['type'] == 'make':
+                        search_kwargs['make'] = criteria['value']
+                    elif criteria['type'] == 'model':
+                        search_kwargs['model'] = criteria['value']
+                    elif criteria['type'] == 'year':
+                        search_kwargs['year'] = criteria['value']
+                    elif criteria['type'] == 'mileage':
+                        search_kwargs['min_mileage'] = criteria['min_value']
+                        search_kwargs['max_mileage'] = criteria['max_value']
+
+                local_results = self.combined_search(local_vehicle_df, local_test_df, **search_kwargs)
 
                 # Send results back to master along with worker ID
                 print(f"Worker {self.rank}: Sending results back to master")

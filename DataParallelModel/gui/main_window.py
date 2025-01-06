@@ -175,6 +175,6 @@ class MainWindow(QWidget):
 
     def force_close(self):
         """Forcefully close the application by terminating all processes."""
-        if self.rank == 0:
-            self.comm.abort()  # Terminates the MPI program from the master node
+        # if self.rank == 0:
+        #     self.comm.abort()  # Terminates the MPI program from the master node
         self.close()

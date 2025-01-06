@@ -17,13 +17,19 @@ def gui_main(comm, rank, size, vehicle_df, test_df):
 
         app.exec_()  # Start the PyQt event loop only for the master
 
+
+
         # Clean shutdown after app closes (for both master and workers)
         print("Master sending termination signal")
+        MPI.Finalize()
         for i in range(1, size):
             comm.isend(None, dest=i, tag=5)  # Send termination signal
+
+
 
     else:
         # Worker processes
         print(f"Worker {rank} started")  # Print when a worker starts
         search_analyzer = SearchAnalyzer(comm, rank, size)
         search_analyzer.worker_process(vehicle_df, test_df)
+

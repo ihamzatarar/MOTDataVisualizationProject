@@ -14,7 +14,7 @@ def main():
 
     # Set load_all_rows to False to load 50,000 rows, True to load 1,000,000 rows
     load_all_rows = False
-    rows_per_file = 1000000 if not load_all_rows else 1000000
+    rows_per_file = 1000 if not load_all_rows else 1000000
 
     data_loader = DataLoader(data_cleaner, rows_per_file)
     # Distribute work and get the DataFrames on the master node
